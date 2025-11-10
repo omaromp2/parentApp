@@ -59,10 +59,35 @@ const currentStep = computed(() => {
     return 1;
 });
 
+const steps = computed(() => [
+    { icon: 'i-lucide-folder-input', label: '1. Select', active: currentStep.value >= 1 },
+    { icon: 'i-lucide-list-plus', label: '2. Queue', active: currentStep.value >= 2 },
+    { icon: 'i-lucide-upload', label: '3. Upload & Process', active: currentStep.value >= 3 },
+    { icon: 'i-lucide-badge-check', label: '4. Summary', active: currentStep.value >= 4 },
+]);
+
 function humanSize(bytes: number) {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function getItemIcon(state: ItemState) {
+    switch (state) {
+        case 'uploaded': return 'i-lucide-check-circle';
+        case 'failed': return 'i-lucide-x-circle';
+        case 'uploading': return 'i-lucide-loader-2';
+        default: return 'i-lucide-file-text';
+    }
+}
+
+function getItemColor(state: ItemState) {
+    switch (state) {
+        case 'uploaded': return 'green';
+        case 'failed': return 'red';
+        case 'uploading': return 'primary';
+        default: return 'gray';
+    }
 }
 
 /** Add selected file(s) to queue; keep File object to avoid later mismatches */
@@ -80,6 +105,11 @@ function onSelect(payload: File[] | null | undefined) {
         });
     }
     // Keep `files` so user can batch-upload; we clear after batch finishes.
+}
+
+function prepareItemForUpload(item: LocalItem) {
+    item.state = "queued";
+    item.error = undefined;
 }
 
 /** Upload ONE item (single-file flow). Safe even if there are many queued. */
@@ -111,10 +141,8 @@ async function uploadAll() {
     if (!pending.length) return;
 
     for (const item of pending) {
-        // If a previous attempt failed, treat Retry in batch as well:
         if (item.state === "failed") {
-            item.state = "queued";
-            item.error = undefined;
+            prepareItemForUpload(item);
         }
         await uploadOne(item);
     }
@@ -135,8 +163,7 @@ async function uploadAll() {
 /** Retry a failed item */
 async function retryItem(item: LocalItem) {
     if (item.state !== "failed" || uploading.value) return;
-    item.state = "queued";
-    item.error = undefined;
+    prepareItemForUpload(item);
     await uploadOne(item);
 }
 
@@ -162,39 +189,18 @@ function resetAll() {
             description="Pick one file or many — upload instantly and let processing finish in the background."
         >
             <template #bottom>
-                <div class="flex items-center gap-2 text-sm">
-                    <div
-                        class="flex items-center gap-2"
-                        :class="currentStep >= 1 ? 'opacity-100' : 'opacity-50'"
-                    >
-                        <UIcon name="i-lucide-folder-input" />
-                        <span>1. Select</span>
-                    </div>
-                    <UIcon name="i-lucide-chevrons-right" class="opacity-50" />
-                    <div
-                        class="flex items-center gap-2"
-                        :class="currentStep >= 2 ? 'opacity-100' : 'opacity-50'"
-                    >
-                        <UIcon name="i-lucide-list-plus" />
-                        <span>2. Queue</span>
-                    </div>
-                    <UIcon name="i-lucide-chevrons-right" class="opacity-50" />
-                    <div
-                        class="flex items-center gap-2"
-                        :class="currentStep >= 3 ? 'opacity-100' : 'opacity-50'"
-                    >
-                        <UIcon name="i-lucide-upload" />
-                        <span>3. Upload & Process</span>
-                    </div>
-                    <UIcon name="i-lucide-chevrons-right" class="opacity-50" />
-                    <div
-                        class="flex items-center gap-2"
-                        :class="currentStep >= 4 ? 'opacity-100' : 'opacity-50'"
-                    >
-                        <UIcon name="i-lucide-badge-check" />
-                        <span>4. Summary</span>
-                    </div>
-                </div>
+                 <div class="flex items-center gap-2 text-sm">
+                     <template v-for="(step, index) in steps" :key="step.label">
+                         <div
+                             class="flex items-center gap-2"
+                             :class="step.active ? 'opacity-100' : 'opacity-50'"
+                         >
+                             <UIcon :name="step.icon" />
+                             <span>{{ step.label }}</span>
+                         </div>
+                         <UIcon v-if="index < steps.length - 1" name="i-lucide-chevrons-right" class="opacity-50" />
+                     </template>
+                 </div>
             </template>
         </UPageHeader>
 
@@ -310,24 +316,11 @@ function resetAll() {
                             <div class="flex items-start justify-between gap-3">
                                 <div class="min-w-0">
                                     <div class="flex items-center gap-2">
-                                        <UIcon
-                                            :name="
-                                                item.state === 'uploaded'
-                                                    ? 'i-lucide-check-circle'
-                                                    : item.state === 'failed'
-                                                      ? 'i-lucide-x-circle'
-                                                      : item.state ===
-                                                          'uploading'
-                                                        ? 'i-lucide-loader-2'
-                                                        : 'i-lucide-file-text'
-                                            "
-                                            :class="
-                                                item.state === 'uploading'
-                                                    ? 'animate-spin'
-                                                    : ''
-                                            "
-                                            class="h-4 w-4"
-                                        />
+                                         <UIcon
+                                             :name="getItemIcon(item.state)"
+                                             :class="{ 'animate-spin': item.state === 'uploading' }"
+                                             class="h-4 w-4"
+                                         />
                                         <span class="font-medium truncate">{{
                                             item.name
                                         }}</span>
@@ -344,19 +337,11 @@ function resetAll() {
                                 </div>
 
                                 <div class="flex items-center gap-2 shrink-0">
-                                    <UBadge
-                                        :color="
-                                            item.state === 'uploaded'
-                                                ? 'green'
-                                                : item.state === 'failed'
-                                                  ? 'red'
-                                                  : item.state === 'uploading'
-                                                    ? 'primary'
-                                                    : 'gray'
-                                        "
-                                        variant="soft"
-                                        :label="item.state"
-                                    />
+                                     <UBadge
+                                         :color="getItemColor(item.state)"
+                                         variant="soft"
+                                         :label="item.state"
+                                     />
 
                                     <!-- Single-file: Upload this one -->
                                     <UButton
